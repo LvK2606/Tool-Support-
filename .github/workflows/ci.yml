@@ -20,6 +20,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Use stable npm 11
+        run: npm install -g npm@11.6.2
       - name: Install
         run: npm install --no-audit --no-fund
       - name: Unit tests
@@ -44,6 +46,8 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
+      - name: Use stable npm 11
+        run: npm install -g npm@11.6.2
       - name: Install Node dependencies
         run: npm install --no-audit --no-fund
       - name: Build desktop app

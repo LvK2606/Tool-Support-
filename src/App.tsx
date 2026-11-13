@@ -180,7 +180,7 @@ export default function App() {
           <div className="panel"><div className="panel-title"><div><h3>Kết quả kiểm tra</h3><p>{checks.length} checks · {scan ? time(scan.timestamp) : "Chưa quét"}</p></div><ScanSearch size={20}/></div>
             <div className="filters"><div className="search-field"><Search size={17}/><input aria-label="Tìm kiểm tra" placeholder="Tìm theo tên hoặc bằng chứng..." value={query} onChange={(e) => setQuery(e.target.value)}/></div>
               <select aria-label="Phân loại" value={category} onChange={(e) => setCategory(e.target.value)}><option value="all">Tất cả module</option><option value="system">Hệ thống</option><option value="network">Mạng</option><option value="windows">Windows</option></select>
-              <select aria-label="Trạng thái" value={filter} onChange={(e) => setFilter(e.target.value)}><option value="all">Mọi trạng thái</option>{(["pass","warn","fail","unknown"] as const).map((s) => <option key={s} value={s}>{labels[s]}</option>)}</select></div>
+              <select aria-label="Trạng thái" value={filter} onChange={(e) => setFilter(e.target.value as CheckStatus | "all")}><option value="all">Mọi trạng thái</option>{(["pass","warn","fail","unknown"] as const).map((s) => <option key={s} value={s}>{labels[s]}</option>)}</select></div>
             <div className="check-list">{matches.map((item, i) => <CheckRow key={item.id + i} item={item}/>)}
               {!matches.length && <div className="empty"><Search size={28}/><p>Không có dữ liệu phù hợp. {scan ? "Thử bộ lọc khác." : "Hãy quét thiết bị trước."}</p></div>}</div>
           </div>
