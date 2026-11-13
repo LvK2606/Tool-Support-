@@ -1,0 +1,31 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "FIXIT Commander",
+  "version": "0.1.0",
+  "identifier": "com.fixit.commander",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "FIXIT Commander | IT Support Workstation",
+        "width": 1280,
+        "height": 810,
+        "minWidth": 930,
+        "minHeight": 640,
+        "backgroundColor": "#F5F7FB"
+      }
+    ],
+    "security": { "csp": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost" }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "shortDescription": "Offline-first Windows IT diagnostics",
+    "windows": { "nsis": { "languages": ["English"], "displayLanguageSelector": false } }
+  }
+}
