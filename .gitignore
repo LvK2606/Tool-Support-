@@ -1,15 +1,11 @@
 node_modules/
 dist/
-target/
-src-tauri/target/
-src-tauri/icons/
 .env
 .env.*
 !.env.example
-*.db
-*.sqlite*
 .DS_Store
 *.log
+.vercel/
 .vscode/
 .idea/
-.vercel/
+coverage/

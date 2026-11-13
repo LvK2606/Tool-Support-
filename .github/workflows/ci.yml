@@ -1,5 +1,4 @@
-name: FIXIT Commander CI
-
+name: FIXIT Web CI
 on:
   push:
     branches: [main]
@@ -11,7 +10,7 @@ permissions:
 
 jobs:
   web:
-    name: Test and build web demo
+    name: Typecheck, test safety and build static web
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,42 +19,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Use stable npm 11
+      - name: Stable npm
         run: npm install -g npm@11.6.2
-      - name: Install
+      - name: Install dependencies
         run: npm install --no-audit --no-fund
-      - name: Unit tests
+      - name: Test PowerShell allowlist and JSON validation
         run: npm test
-      - name: Typecheck and build
+      - name: TypeScript check and Vite production build
         run: npm run build
-
-  windows:
-    name: Build Windows NSIS installer
-    needs: web
-    if: github.event_name != 'pull_request'
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: Install Rust stable
-        shell: pwsh
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
-      - name: Use stable npm 11
-        run: npm install -g npm@11.6.2
-      - name: Install Node dependencies
-        run: npm install --no-audit --no-fund
-      - name: Build desktop app
-        run: npm run build:desktop
-      - name: Upload unsigned installer
-        uses: actions/upload-artifact@v4
-        with:
-          name: fixit-commander-windows-unsigned
-          path: src-tauri/target/release/bundle/nsis/*.exe
-          if-no-files-found: error
-          retention-days: 14

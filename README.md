@@ -1,80 +1,51 @@
-# FIXIT Commander
+# FIXIT Commander — Web Edition
 
-**Windows-first, offline-first IT Support diagnostic workstation.** A real Tauri 2 + Rust + React application with a browser-only demonstration, local SQLite audit history, read-only inventory and explicitly approved repair recipes.
+**FIXIT Commander is now a no-install IT Support website.** Users create an inspectable read-only Windows PowerShell script, choose to run it manually on authorized Windows devices, and import a locally generated JSON file to get diagnostic findings. Browser JavaScript never executes OS repair commands.
 
-> **Important:** The Vercel/web version cannot scan or repair the visitor's computer. Its UI and data are labeled **DEMO**. Real Windows diagnostics run only in the Windows desktop executable. v0.1.0 is an early MVP, not a finished all-in-one computer repair solution.
+**Production:** https://fixit-commander.vercel.app
 
-## Architecture
+## Features
 
-- **Windows desktop:** Tauri 2, React 19, TypeScript, Rust.
-- **Local collection:** fixed, read-only PowerShell/CIM queries on Windows; no free-form command execution.
-- **Rules:** deterministic evaluation of disk capacity, configured DNS/gateway and service statuses. Missing data is \`unknown\`.
-- **Repairs:** allowlisted Windows commands, per-use preview, one-time token (120s), explicit consent, bounded timeout. Never bypasses UAC.
-- **Audit:** per-device SQLite in the OS local application data directory; never uploaded.
-- **Website:** the same frontend, built with Vite. Browser is deliberately locked to demo data.
-- **Cloud:** no account, database, or API required for MVP. Neon, Supabase, Render, and Cloudflare are *not* provisioned.
+- Four preset read-only diagnostics: system/disk, network configuration, Windows services/event counts and printers.
+- PowerShell 5.1 compatible generated script with only selected modules and local JSON output to Desktop/Documents.
+- Copy/paste recommended. Optional script download is a plain .ps1 text file, not an installer. Never override enterprise execution policy.
+- Local browser JSON import, strict schema and field allowlist, 512 KB file limit. No network uploads and no localStorage.
+- Deterministic classification: normal, warning, critical and unknown. Missing data never implies success.
+- Exports sanitized analysis JSON.
+- Manual, consent-gated repair snippets: flush DNS, DISM CheckHealth, and read-only DNS/Spooler checks.
+- Responsive browser UI and clear sample-data labeling.
+- Vercel static hosting, CSP with connect-src none and GitHub Actions tests.
 
-## Implemented now (v0.1.0)
+## Usage
 
-| Area | Status |
-|---|---|
-| System summary (OS, CPU, RAM, uptime, local disks) | Implemented via CIM, requires Windows |
-| Local network config (DHCP, IP, gateway, DNS configuration present) | Implemented; no unsolicited Internet probes |
-| Basic Windows services | Implemented |
-| Deterministic findings and unknown status | Implemented |
-| \`ipconfig /flushdns\` | Fixed recipe; approval required, result remains **unverified** until separate DNS testing |
-| \`DISM /Online /Cleanup-Image /CheckHealth\` | Fixed read-only check; may require administrator privileges |
-| Local SQLite history | Implemented |
-| Download redacted JSON report | Implemented |
-| Real Windows installers | CI workflow attempts NSIS artifact on Windows; check workflow status before claiming installer availability |
-| Event Log correlation, pending reboot, printer, DHCP renew, SFC and remote agents | Future versions; not implemented |
-| AI analysis and cloud fleet dashboard | Out of scope of MVP |
+1. Open website and choose **Tạo lệnh chẩn đoán**.
+2. Select modules, inspect the PowerShell script, click **Sao chép toàn bộ**.
+3. On the Windows machine you are authorized to support, open **Windows PowerShell**, paste and run the inspected code. No Admin request, remote download or execution-policy modification.
+4. Find `FIXIT-Report-YYYYMMDD-HHmmss.json` on your Desktop, or Documents fallback.
+5. On website, choose **Phân tích kết quả** → **Nhập file JSON**. It is processed inside your browser; Vercel never receives its contents.
+6. Inspect issues and advice. For a repair, review the allowlisted command, acknowledge, copy and execute manually. Re-run diagnostics to verify.
 
-## Local development
+**Important:** The browser cannot inspect or fix Windows directly. No remote agent, no hidden background task. Users must obey enterprise PowerShell/Group Policy restrictions.
 
-Prerequisites: Node.js 22+, Rust stable toolchain, Windows 11 x64, Microsoft C++ build tools, WebView2, and Tauri Windows prerequisites.
+## Development
 
-\`\`\`bash
-npm install
-npm run dev            # browser demo, no OS access
-npm run test
-npm run build          # static web demo
-npm run tauri dev      # Windows real diagnostic shell
-npm run build:desktop  # NSIS Windows installer; generates icons
-\`\`\`
+Requires Node.js 22+ and npm 11 recommended.
 
-**Production builds must be tested on a Windows VM before distributing installers.** Unsigned installers may trigger Microsoft SmartScreen warnings. Build artifacts are generated by the GitHub Actions workflow when it succeeds; no prebuilt trusted binary is committed to Git.
+`npm install`
+`npm run dev`
+`npm test`
+`npm run build`
+`npm run preview`
 
-## Usage and safety
+## Structure
 
-1. On Windows run the desktop app, click **Quét máy tính**. This reads only bounded Windows system metadata.
-2. Open **Chẩn đoán** for evidence and recommendations. A green status means only the *checked condition* passed, never that the whole PC is healthy.
-3. Open **Fix Center**, choose a supported recipe, inspect its impact, tick consent, and submit.
-4. The Rust backend consumes a one-time approval token and runs a predefined binary/argv sequence, never user-provided shell text.
-5. Local history persists in SQLite. Reports redact hostname by default.
-6. On the web, equivalent clicks are **simulation only**. They do not inspect the user's PC.
+- `src/App.tsx`: web interface.
+- `src/lib/diagnostic-script.ts`: fixed PowerShell collectors and manual repair recipes.
+- `src/lib/report.ts`: secure local JSON import, normalization, rules and sanitized export.
+- `src/lib/report.test.ts`: allowlist, parsing and rules tests.
+- `vercel.json`: CSP and static deployment.
+- `.github/workflows/ci.yml`: safety tests + Vite build.
 
-No cloud telemetry, no auto driver update, no registry cleaners, no Defender/Firewall changes, no credentials collection, and no blanket system optimization.
+The desktop Tauri version is preserved in Git history prior to this web migration and is no longer part of the current branch/build. Render, Neon, Supabase and Cloudflare are intentionally unnecessary and not provisioned.
 
-## Repository layout
-
-\`\`\`text
-src/                     React UI, demo adapter, typed IPC and report
-src-tauri/src/lib.rs      Windows collectors, rule engine, allowlisted recipes, SQLite
-src-tauri/tauri.conf.json Desktop configuration
-src-tauri/capabilities/   Tauri permissions (no shell/filesystem plugins)
-.github/workflows/       Web tests and Windows installer build
-docs/                    Deployment, security, roadmap
-\`\`\`
-
-## Deployment
-
-**GitHub** is the source of truth. **Vercel** serves only the Vite demo (build \`npm run build\`, output \`dist\`). Real desktop app diagnostics run locally and never depend on Vercel.
-
-Render, Neon, Supabase, and Cloudflare are intentionally unprovisioned until there is a justified business requirement for secure fleet sync or an API; deploying a local IT diagnostic tool to all providers would increase both attack surface and costs.
-
-Read [docs/SECURITY.md](docs/SECURITY.md) and [docs/ROADMAP.md](docs/ROADMAP.md) before using this outside a test VM.
-
-## Project stage
-
-**v0.1.0 early MVP.** Network tests do not yet validate external DNS or TCP connectivity; Windows Event Log monitoring, admin helper/elevation, safe redaction of arbitrary evidence, installer signing and comprehensive Windows QA are still pending.
+See [Security model](docs/SECURITY.md) and [Roadmap](docs/ROADMAP.md).

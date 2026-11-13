@@ -1,235 +1,243 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
-  Activity, AlertCircle, ArrowRight, CheckCircle2, ChevronRight, CircleHelp, Clock3,
-  Cpu, Database, Download, FileText, HardDrive, History, LayoutDashboard, LockKeyhole,
-  Menu, Monitor, Network, RotateCw, ScanSearch, Search, Settings2, ShieldCheck,
-  ShieldAlert, Stethoscope, Wifi, Wrench, X,
+  Activity, AlertCircle, ArrowRight, BookOpenCheck, Check, CheckCheck, CheckCircle2, ChevronRight,
+  CircleHelp, Clipboard, ClipboardCheck, Code2, Cpu, Download, FileJson2, FileText, Gauge,
+  LayoutDashboard, LockKeyhole, Menu, Monitor, Network, Printer,
+  ScanSearch, Search, Shield, ShieldAlert, ShieldCheck, Terminal, UploadCloud,
+  Wrench, X, type LucideIcon,
 } from "lucide-react";
-import type { Check, CheckStatus, HistoryItem, RecipePreview, ScanResult, Section } from "./lib/types";
-import { demoScan, initialDemo } from "./lib/demo";
-import { executeFix, isDesktop, loadHistory, previewFix, scanDevice } from "./lib/api";
-import { createRedactedReport, downloadReport } from "./lib/report";
+import { buildDiagnosticScript, MODULES, REPAIR_RECIPES, type ModuleId } from "./lib/diagnostic-script";
+import { analyzeReport, exportAnalysis, parseDiagnosticReport, type AnalyzedReport, type Finding, type Severity } from "./lib/report";
 
-const pages: Array<{ id: Section; label: string; icon: typeof LayoutDashboard }> = [
-  { id: "dashboard", label: "Tổng quan", icon: LayoutDashboard },
-  { id: "diagnostics", label: "Chẩn đoán", icon: Stethoscope },
-  { id: "fixes", label: "Fix Center", icon: Wrench },
-  { id: "history", label: "Lịch sử", icon: History },
-  { id: "reports", label: "Báo cáo", icon: FileText },
-  { id: "settings", label: "Cài đặt", icon: Settings2 },
+type Page = "overview" | "script" | "analysis" | "repairs" | "guide";
+type DataSource = "import" | "sample";
+const NAV: Array<{ id: Page; label: string; icon: LucideIcon }> = [
+  {id:"overview",label:"Tổng quan",icon:LayoutDashboard},
+  {id:"script",label:"Tạo lệnh chẩn đoán",icon:Terminal},
+  {id:"analysis",label:"Phân tích kết quả",icon:ScanSearch},
+  {id:"repairs",label:"Thư viện sửa lỗi",icon:Wrench},
+  {id:"guide",label:"Hướng dẫn & bảo mật",icon:ShieldCheck},
 ];
-const recipes = [
-  { id: "NET_FLUSH_DNS", title: "Xóa bộ nhớ đệm DNS", description: "Thực thi ipconfig /flushdns, không thay đổi DNS server, firewall hay địa chỉ IP.", risk: "low", tag: "Có thể thực hiện", enabled: true, icon: Network },
-  { id: "WIN_DISM_CHECK", title: "Kiểm tra thành phần Windows", description: "Chạy DISM /Online /Cleanup-Image /CheckHealth (chỉ kiểm tra).", risk: "medium", tag: "Có thể thực hiện", enabled: true, icon: ShieldCheck },
-  { id: "NET_RENEW_DHCP", title: "Gia hạn DHCP", description: "Chỉ hỗ trợ khi đã có kiểm tra adapter và bảo vệ phiên hỗ trợ từ xa.", risk: "medium", tag: "Roadmap V1.1", enabled: false, icon: Wifi },
-  { id: "WIN_SFC", title: "SFC /scannow", description: "Cần kiểm soát quyền Administrator, thời gian chạy và xác minh sau sửa.", risk: "high", tag: "Roadmap V1.1", enabled: false, icon: HardDrive },
-];
-const labels: Record<CheckStatus, string> = {
-  pass: "Bình thường", warn: "Cảnh báo", fail: "Lỗi", unknown: "Chưa xác định",
+const MOD_ICONS:Record<ModuleId,LucideIcon>={system:Cpu,network:Network,windows:Activity,printer:Printer};
+const LABELS:Record<Severity,string>={ok:"Bình thường",warning:"Cảnh báo",critical:"Cần chú ý",unknown:"Chưa xác định"};
+const DEMO_REPORT = {
+  schema:"fixit-commander-diagnostics",schemaVersion:1,generatedAt:"2026-11-13T09:00:00.000Z",
+  modules:["system","network","windows","printer"],
+  system:{osCaption:"Windows 11 Pro (mẫu)",osVersion:"10.0",cpuName:"Intel Core i5 (mẫu)",ramGB:16,uptimeHours:34,
+    disks:[{drive:"C:",totalGB:256,freeGB:24,freePct:9.4},{drive:"D:",totalGB:512,freeGB:260,freePct:50.8}]},
+  network:{adapters:[{name:"Ethernet (mẫu)",ipv4Configured:true,dhcpEnabled:true,hasGateway:true,hasDns:true}]},
+  windows:{services:[{name:"Dnscache",status:"Running",startType:"Automatic"},
+    {name:"Dhcp",status:"Running",startType:"Automatic"},
+    {name:"EventLog",status:"Running",startType:"Automatic"},
+    {name:"Spooler",status:"Stopped",startType:"Manual"}],
+    systemErrorCountSampled:2,systemErrorSampleLimit:20},
+  printer:{spoolerStatus:"Stopped",printerCount:1},errors:[],
 };
-const categories: Record<string, string> = { system: "Hệ thống", network: "Mạng", windows: "Windows" };
-function time(value: string): string {
-  return new Date(value).toLocaleString("vi-VN", { dateStyle: "short", timeStyle: "short" });
+function saveText(name:string, content:string, mime:string){
+  const url=URL.createObjectURL(new Blob([content],{type:mime}));
+  const a=document.createElement("a");a.href=url;a.download=name;
+  document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
 }
-function Pill({ status }: { status: CheckStatus }) {
-  return <span className={"pill " + status}>{labels[status]}</span>;
+function Status({severity}:{severity:Severity}){
+  return <span className={"status "+severity}><span className="status-dot"/>{LABELS[severity]}</span>;
 }
-function Brand({ compact = false }: { compact?: boolean }) {
-  return <div className="brand"><div className="brandmark"><Monitor size={21} strokeWidth={2.5}/><span className="branddot"/></div>{!compact && <div><strong>FIXIT <span>Commander</span></strong><small>IT SUPPORT WORKSTATION</small></div>}</div>;
+function FindingItem({finding}:{finding:Finding}){
+  const Icon=finding.severity==="ok"?CheckCircle2:finding.severity==="unknown"?CircleHelp:AlertCircle;
+  return <article className="finding"><div className={"finding-icon "+finding.severity}><Icon size={18}/></div>
+    <div className="finding-body"><div className="finding-main"><strong>{finding.title}</strong><Status severity={finding.severity}/></div>
+      <p>{finding.evidence}</p><small>{finding.category} <span className="dot-divide">·</span> {finding.advice}</small></div>
+  </article>;
 }
-function CheckRow({ item }: { item: Check }) {
-  return <div className="check-row">
-    <div className={"check-icon " + item.status}>{item.status === "pass" ? <CheckCircle2 size={19}/> : item.status === "unknown" ? <CircleHelp size={19}/> : <AlertCircle size={19}/>}</div>
-    <div className="check-body"><strong>{item.title}</strong><p>{item.evidence}</p><small>{categories[item.category] ?? item.category} · {item.recommendation}</small></div>
-    <Pill status={item.status}/>
-  </div>;
-}
-
-export default function App() {
-  const [page, setPage] = useState<Section>("dashboard");
-  const [mobileNav, setMobileNav] = useState(false);
-  const [scan, setScan] = useState<ScanResult | null>(isDesktop ? null : initialDemo);
-  const [busy, setBusy] = useState(false);
-  const [filter, setFilter] = useState<CheckStatus | "all">("all");
-  const [category, setCategory] = useState("all");
-  const [query, setQuery] = useState("");
-  const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [preview, setPreview] = useState<RecipePreview | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-  const [outcome, setOutcome] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (isDesktop) void loadHistory().then(setHistory).catch((error) => setMessage(String(error)));
-  }, []);
-
-  const checks = scan?.checks ?? [];
-  const counts = {
-    pass: checks.filter((c) => c.status === "pass").length,
-    warn: checks.filter((c) => c.status === "warn").length,
-    fail: checks.filter((c) => c.status === "fail").length,
-    unknown: checks.filter((c) => c.status === "unknown").length,
+export default function App(){
+  const [page,setPage]=useState<Page>("overview");
+  const [mobileNav,setMobileNav]=useState(false);
+  const [modules,setModules]=useState<ModuleId[]>(["system","network","windows"]);
+  const [result,setResult]=useState<AnalyzedReport|null>(null);
+  const [source,setSource]=useState<DataSource|null>(null);
+  const [notice,setNotice]=useState<string|null>(null);
+  const [copied,setCopied]=useState<string|null>(null);
+  const [severity,setSeverity]=useState<Severity|"all">("all");
+  const [search,setSearch]=useState("");
+  const [approved,setApproved]=useState(false);
+  const [selectedRecipe,setSelectedRecipe]=useState<string|null>(null);
+  const picker=useRef<HTMLInputElement>(null);
+  const script=useMemo(()=>buildDiagnosticScript(modules.length?modules:["system"]),[modules]);
+  const currentRecipe=REPAIR_RECIPES.find((r)=>r.id===selectedRecipe);
+  const navigate=(next:Page)=>{setPage(next);setMobileNav(false);setNotice(null);window.scrollTo({top:0,behavior:"smooth"});};
+  const toggleModule=(value:ModuleId)=>{
+    setModules((old)=>old.includes(value)?old.length>1?old.filter((v)=>v!==value):old:[...old,value]);
   };
-  const matches = useMemo(() => checks.filter((item) =>
-    (filter === "all" || item.status === filter) &&
-    (category === "all" || item.category === category) &&
-    (item.title + " " + item.evidence).toLowerCase().includes(query.toLowerCase())
-  ), [checks, filter, category, query]);
-  const refreshHistory = async () => {
-    if (isDesktop) setHistory(await loadHistory());
+  const copy=async(content:string,key:string)=>{
+    try{await navigator.clipboard.writeText(content);setCopied(key);setNotice("Đã sao chép vào clipboard. Hãy đọc kỹ nội dung trước khi thực thi.");}
+    catch{setNotice("Trình duyệt không cho phép sao chép tự động. Hãy chọn và sao chép nội dung trong khung lệnh.");}
   };
-  const runScan = async () => {
-    setBusy(true); setMessage(null); setOutcome(null);
-    try {
-      const result = isDesktop ? await scanDevice() : demoScan();
-      setScan(result);
-      if (isDesktop) await refreshHistory();
-      else setHistory((rows) => [{ id: result.id, timestamp: result.timestamp, kind: "scan", status: "demo", summary: "Quét dữ liệu mô phỏng — không truy cập Windows" }, ...rows]);
-      setMessage(isDesktop ? "Đã thu thập dữ liệu Windows và lưu lịch sử cục bộ." : "Chỉ chạy dữ liệu mẫu trong trình duyệt. Không có máy nào được quét.");
-    } catch (error) { setMessage("Không thể quét thiết bị: " + String(error)); }
-    finally { setBusy(false); }
+  const loadJson=async(file:File|undefined)=>{
+    if(!file)return;
+    try{
+      if(file.size>512*1024)throw new Error("File vượt giới hạn 512 KB.");
+      if(!file.name.toLowerCase().endsWith(".json"))throw new Error("Hãy chọn file FIXIT-Report-*.json.");
+      const data=parseDiagnosticReport(await file.text());
+      setResult(analyzeReport(data));setSource("import");setSeverity("all");setSearch("");
+      setNotice("Đã phân tích file JSON cục bộ. Không tải file lên Vercel hoặc API.");
+      navigate("analysis");
+      setNotice("Đã nhập và phân tích báo cáo cục bộ, không gửi file lên server.");
+    }catch(err){setNotice(err instanceof Error?err.message:"Không thể đọc báo cáo.");}
+    finally{if(picker.current)picker.current.value="";}
   };
-  const openPreview = async (id: string) => {
-    setMessage(null); setOutcome(null);
-    try { setPreview(await previewFix(id)); }
-    catch (error) { setMessage(String(error)); }
+  const sample=()=>{
+    setResult(analyzeReport(parseDiagnosticReport(JSON.stringify(DEMO_REPORT))));
+    setSource("sample");setSearch("");setSeverity("all");navigate("analysis");
+    setNotice("Đây là dữ liệu mẫu để thử giao diện, KHÔNG phải tình trạng máy tính của bạn.");
   };
-  const applyFix = async () => {
-    if (!preview) return;
-    if (!isDesktop) {
-      setHistory((rows) => [{
-        id: "demo-repair-" + Date.now(), timestamp: new Date().toISOString(), kind: "repair", status: "demo",
-        summary: "Mô phỏng " + preview.title + " — KHÔNG thực thi lệnh",
-      }, ...rows]);
-      setOutcome("Mô phỏng thành công trên giao diện. Không có lệnh Windows nào được chạy.");
-      setPreview(null);
-      return;
-    }
-    setBusy(true);
-    try {
-      const result = await executeFix(preview.token);
-      setOutcome(result.detail + " · Trạng thái: " + result.state);
-      await refreshHistory();
-    } catch (error) { setOutcome("Thao tác thất bại: " + String(error)); }
-    finally { setBusy(false); setPreview(null); }
-  };
-  const changePage = (value: Section) => { setPage(value); setMobileNav(false); setMessage(null); };
-  const scanButton = <button className="button primary" disabled={busy} onClick={() => void runScan()}>
-    {busy ? <RotateCw className="spin" size={17}/> : <ScanSearch size={17}/>}
-    {busy ? "Đang xử lý..." : isDesktop ? "Quét máy tính" : "Chạy quét mô phỏng"}
-  </button>;
-
-  return <div className="shell">
-    <aside className={"sidebar " + (mobileNav ? "visible" : "")}>
-      <div className="sidebar-head"><Brand/><button className="close-mobile" aria-label="Đóng menu" onClick={() => setMobileNav(false)}><X size={19}/></button></div>
-      <div className="workspace-label">WORKSPACE</div>
-      <nav aria-label="Điều hướng chính">{pages.map(({ id, label, icon: Icon }) =>
-        <button key={id} className={"nav-item " + (page === id ? "selected" : "")} onClick={() => changePage(id)}>
-          <Icon size={19}/><span>{label}</span>{page === id && <ChevronRight size={16} className="nav-chevron"/>}
+  const findings=(result?.findings??[]).filter((f)=>
+    (severity==="all"||f.severity===severity)&&
+    (f.title+" "+f.evidence+" "+f.category).toLowerCase().includes(search.toLowerCase())
+  );
+  const openRepair=(id:string)=>{setSelectedRecipe(id);setApproved(false);setCopied(null);setNotice(null);};
+  const closeRepair=()=>{setSelectedRecipe(null);setApproved(false);};
+  const importButton=(className="primary")=><button className={"btn "+className} onClick={()=>picker.current?.click()}>
+    <UploadCloud size={17}/> Nhập file JSON <ArrowRight size={16}/></button>;
+  return <div className="layout">
+    <input ref={picker} className="visually-hidden" type="file" accept=".json,application/json" onChange={(e)=>void loadJson(e.target.files?.[0])} aria-label="Chọn file FIXIT-Report JSON"/>
+    <aside className={"sidebar "+(mobileNav?"is-open":"")}>
+      <div className="identity"><div className="identity-logo"><Monitor size={21}/><span/></div>
+        <div><strong>FIXIT <em>Commander</em></strong><small>IT SUPPORT / WEB EDITION</small></div>
+        <button className="icon-btn mobile-close" aria-label="Đóng menu" onClick={()=>setMobileNav(false)}><X size={18}/></button></div>
+      <div className="side-caption">WORKSPACE</div>
+      <nav aria-label="Điều hướng">{NAV.map(({id,label,icon:Icon})=>
+        <button key={id} className={"nav-link "+(page===id?"active":"")} onClick={()=>navigate(id)}>
+          <Icon size={18}/><span>{label}</span>{page===id&&<ChevronRight size={16} className="nav-arrow"/>}
         </button>)}</nav>
-      <div className="sidebar-bottom">
-        <div className="local-card"><ShieldCheck size={21}/><b>Local-first</b><p>Không tải log hoặc cấu hình thiết bị lên cloud.</p></div>
-        <div className="sidebar-footer"><span className="live-dot"/> {isDesktop ? "Windows Desktop" : "Website Demo"} <span className="muted">· v0.1.0</span></div>
-      </div>
+      <div className="side-bottom"><div className="privacy-side"><div className="privacy-icon"><ShieldCheck size={21}/></div>
+        <strong>Private by design</strong><p>Phân tích ngay trong trình duyệt. Không có tài khoản, database hay upload tự động.</p></div>
+        <div className="side-version"><span className="green-light"/> Web-only · v1.0.0</div></div>
     </aside>
-    {mobileNav && <button aria-label="Đóng menu" className="mobile-backdrop" onClick={() => setMobileNav(false)}/>}
-    <main className="main">
-      <header className="topbar">
-        <div className="header-left"><button className="mobile-menu" aria-label="Mở menu" onClick={() => setMobileNav(true)}><Menu size={21}/></button>
-          <span className="breadcrumb">Workspace</span><ChevronRight size={15} className="dim"/><strong>{pages.find((p) => p.id === page)?.label}</strong></div>
-        <div className="header-right"><span className="read-mode"><LockKeyhole size={14}/> Read-only mặc định</span>
-          <span className={"mode-badge " + (!isDesktop ? "demo" : "")}>{isDesktop ? "DESKTOP • LOCAL" : "WEB • DEMO DATA"}</span></div>
+    {mobileNav&&<button aria-label="Đóng menu" className="backdrop" onClick={()=>setMobileNav(false)}/>}
+    <div className="workspace">
+      <header className="topbar"><div className="topbar-left"><button className="icon-btn mobile-menu" aria-label="Mở menu" onClick={()=>setMobileNav(true)}><Menu size={20}/></button>
+          <span>Workspace</span><ChevronRight size={14}/><strong>{NAV.find((p)=>p.id===page)?.label}</strong></div>
+        <div className="topbar-right"><span className="private-flag"><LockKeyhole size={14}/> Local analysis</span><span className="web-flag"><span/> WEB · NO INSTALL</span></div>
       </header>
-      <div className="content">
-        {!isDesktop && <div className="demo-banner"><ShieldAlert size={18}/><div><strong>Chế độ demo trên trình duyệt.</strong> Tất cả thông số máy, cảnh báo và sửa lỗi đều là dữ liệu mô phỏng. Bản web không thể chẩn đoán hay sửa Windows.</div></div>}
-        {message && <div className="feedback" role="status"><Activity size={17}/><span>{message}</span><button aria-label="Đóng thông báo" onClick={() => setMessage(null)}><X size={16}/></button></div>}
-        {outcome && <div className="feedback" role="status"><ShieldCheck size={18}/><span>{outcome}</span><button aria-label="Đóng kết quả" onClick={() => setOutcome(null)}><X size={16}/></button></div>}
-
-        {page === "dashboard" && <>
-          <div className="heading"><div><div className="eyebrow"><span className="pulse"/> IT SUPPORT COMMAND CENTER</div><h1>Tổng quan hệ thống</h1><p>Chẩn đoán có bằng chứng. Sửa lỗi có xác nhận. Mọi dữ liệu được giữ cục bộ.</p></div>{scanButton}</div>
-          <div className="hero"><div className="hero-copy"><div className="hero-tag"><ShieldCheck size={15}/> WORKSTATION STATUS</div>
-              <h2>{scan ? "Thiết bị đã có kết quả chẩn đoán" : "Sẵn sàng quét thiết bị"}</h2>
-              <p>{scan ? "Xem các chỉ số và cảnh báo. Mỗi thao tác sửa lỗi đều phải được phê duyệt riêng." : "Nhấn Quét máy tính để thu thập trạng thái hệ thống Windows của bạn."}</p>
-              <button className="hero-link" onClick={() => changePage("diagnostics")}>Khám phá kết quả <ArrowRight size={17}/></button>
-            </div><div className="hero-art"><div className="orbit a"/><div className="orbit b"/><div className="device-illustration"><Monitor size={87} strokeWidth={1.1}/><span className="status-bubble"><CheckCircle2 size={22}/></span></div></div>
+      <main className="main">
+        <div className="web-notice"><ShieldCheck size={18}/><span><b>Chế độ Web + PowerShell thủ công.</b> Website không trực tiếp đọc hay sửa Windows. Bạn chủ động chạy lệnh và chọn file JSON để phân tích.</span></div>
+        {notice&&<div className="flash" role="status"><CircleHelp size={17}/><span>{notice}</span><button onClick={()=>setNotice(null)} aria-label="Đóng thông báo"><X size={16}/></button></div>}
+        {page==="overview"&&<>
+          <div className="page-head"><div className="eyebrow"><span className="green-light"/> IT SUPPORT COMMAND CENTER</div>
+            <h1>Sửa lỗi máy tính, <span>đơn giản hơn.</span></h1>
+            <p>Thu thập thông tin Windows bằng lệnh PowerShell an toàn, phân tích kết quả ngay trên web và thực hiện thao tác đã xem xét.</p></div>
+          <section className="hero"><div className="hero-content"><div className="hero-chip"><ShieldCheck size={15}/> KHÔNG CẦN CÀI ỨNG DỤNG</div>
+            <h2>Chẩn đoán có bằng chứng.<br/>Sửa lỗi có kiểm soát.</h2>
+            <p>Không remote agent, không tải phần mềm lạ, không chạy lệnh từ Internet. Bạn luôn là người quyết định.</p>
+            <button className="btn hero-action" onClick={()=>navigate("script")}>Bắt đầu chẩn đoán <ArrowRight size={18}/></button></div>
+            <div className="hero-visual"><div className="hero-ring r1"/><div className="hero-ring r2"/><div className="screen"><div className="screen-bar"><i/><i/><i/></div><div className="screen-line"/><div className="screen-line short"/><div className="screen-panel"><CheckCircle2 size={24}/><span>CHECK COMPLETE</span></div></div></div></section>
+          <div className="metric-grid">{[
+            {label:"Cần cài ứng dụng",value:"0",note:"Chỉ dùng trình duyệt & PowerShell",icon:Download},
+            {label:"Module chẩn đoán",value:"04",note:"Hệ thống, mạng, Windows, máy in",icon:ScanSearch},
+            {label:"Dữ liệu tải lên server",value:"0",note:"Phân tích JSON tại trình duyệt",icon:Shield},
+            {label:"Lệnh thao tác thủ công",value:"04",note:"Chỉ chọn từ danh mục cố định",icon:Terminal},
+          ].map((v)=><div className="metric" key={v.label}><div className="metric-icon"><v.icon size={20}/></div>
+              <strong>{v.value}</strong><span>{v.label}</span><small>{v.note}</small></div>)}</div>
+          <div className="section-heading"><div><h2>Quy trình làm việc</h2><p>Ba bước rõ ràng, luôn có sự kiểm soát của kỹ thuật viên</p></div><span>WORKFLOW / 01—03</span></div>
+          <div className="workflow">
+            <button className="workflow-card" onClick={()=>navigate("script")}><span className="step-number">01</span><div className="flow-icon"><Code2/></div><h3>Tạo lệnh chẩn đoán</h3>
+              <p>Chọn module, xem trước nội dung và sao chép PowerShell chỉ đọc.</p><span className="card-link">Tạo lệnh <ArrowRight size={16}/></span></button>
+            <button className="workflow-card" onClick={()=>navigate("guide")}><span className="step-number">02</span><div className="flow-icon"><Monitor/></div><h3>Chạy trên Windows</h3>
+              <p>Chạy thủ công trong PowerShell. Báo cáo JSON lưu trên Desktop/Documents.</p><span className="card-link">Xem hướng dẫn <ArrowRight size={16}/></span></button>
+            <button className="workflow-card" onClick={()=>navigate("analysis")}><span className="step-number">03</span><div className="flow-icon"><FileJson2/></div><h3>Nhập & phân tích</h3>
+              <p>Chọn JSON để web đánh giá, phân loại lỗi và đưa hướng xử lý.</p><span className="card-link">Phân tích <ArrowRight size={16}/></span></button>
           </div>
-          <div className="metrics">
-            {([{ key: "pass", value: counts.pass, label: "Kiểm tra tốt", icon: CheckCircle2 },
-              { key: "warn", value: counts.warn, label: "Cảnh báo", icon: AlertCircle },
-              { key: "unknown", value: counts.unknown, label: "Chưa xác định", icon: CircleHelp },
-              { key: "all", value: checks.length, label: "Tổng kiểm tra", icon: ScanSearch }] as const).map((s) =>
-              <div className="metric" key={s.key}><div className={"metric-icon " + s.key}><s.icon size={20}/></div><b>{s.value.toString().padStart(2, "0")}</b><span>{s.label}</span></div>)}
+          <div className="bottom-cta"><div><h3>Đã có file FIXIT-Report?</h3><p>Nhập báo cáo để xem các vấn đề và xuất biên bản.</p></div>{importButton()}</div>
+        </>}
+        {page==="script"&&<>
+          <div className="page-heading"><div className="eyebrow">STEP 01 / PREPARE</div><h1>Tạo lệnh chẩn đoán</h1>
+            <p>Chỉ chọn các phép đọc hệ thống cần thiết. Lệnh không tự chạy trên máy và không yêu cầu Administrator.</p></div>
+          <div className="content-grid">
+            <section className="panel"><div className="panel-title"><div><h2>Chọn khu vực cần kiểm tra</h2><p>{modules.length}/4 module đang được chọn</p></div><span className="count-chip">{modules.length} MODULES</span></div>
+              <div className="module-list">{MODULES.map((m)=>{
+                const Icon=MOD_ICONS[m.id],checked=modules.includes(m.id);
+                return <label className={"module-option "+(checked?"checked":"")} key={m.id}><div className="module-icon"><Icon size={21}/></div>
+                  <span><strong>{m.title}</strong><small>{m.description}</small></span><input type="checkbox" checked={checked} onChange={()=>toggleModule(m.id)} aria-label={m.title}/>
+                  <span className="fake-check">{checked&&<Check size={13}/>}</span></label>;
+              })}</div>
+              <div className="info-note"><LockKeyhole size={18}/><span>Script không đọc mật khẩu, tài khoản, nội dung file, tên tài liệu in hoặc địa chỉ IP cụ thể.</span></div>
+            </section>
+            <section className="panel script-panel"><div className="panel-title"><div><h2>PowerShell được tạo</h2><p>Script cố định · Chỉ đọc · Có thể kiểm tra trước</p></div><span className="safe-chip"><ShieldCheck size={13}/> READ ONLY</span></div>
+              <div className="codebar"><span><i/><i/><i/> FIXIT-Diagnostics.ps1</span><span>Windows PowerShell 5.1+</span></div>
+              <pre className="code-preview"><code>{script}</code></pre>
+              <div className="code-actions"><button className="btn primary" onClick={()=>void copy(script,"script")}>{copied==="script"?<ClipboardCheck size={17}/>:<Clipboard size={17}/>} {copied==="script"?"Đã sao chép":"Sao chép toàn bộ"}</button>
+                <button className="btn secondary" onClick={()=>saveText("FIXIT-Diagnostics.ps1",script,"text/plain;charset=utf-8")}><Download size={17}/> Tải file .ps1</button></div>
+              <p className="under-code">Ưu tiên sao chép và dán vào PowerShell sau khi đọc lệnh. File .ps1 tải xuống có thể bị chính sách thực thi của doanh nghiệp chặn; không thay đổi chính sách để vượt qua giới hạn đó.</p>
+            </section>
           </div>
-          <div className="columns"><section className="panel"><div className="panel-title"><div><h3>Thiết bị hiện tại</h3><p>Thông tin hệ thống cơ bản</p></div><Monitor size={20}/></div>
-            <div className="spec"><span>Hostname</span><strong>{scan?.snapshot.hostname ?? "Chưa thu thập"}</strong></div>
-            <div className="spec"><span>Hệ điều hành</span><strong>{scan?.snapshot.os ?? "—"}</strong></div>
-            <div className="spec"><span>Vi xử lý</span><strong>{scan?.snapshot.cpu ?? "—"}</strong></div>
-            <div className="spec"><span>Bộ nhớ RAM</span><strong>{scan?.snapshot.ramGB != null ? scan.snapshot.ramGB + " GB" : "—"}</strong></div>
-            <div className="spec"><span>Lần quét gần nhất</span><strong>{scan ? time(scan.timestamp) : "Chưa quét"}</strong></div>
-          </section><section className="panel"><div className="panel-title"><div><h3>Điểm cần chú ý</h3><p>Kết quả được phân loại minh bạch</p></div><button className="text-link" onClick={() => changePage("diagnostics")}>Xem tất cả <ArrowRight size={15}/></button></div>
-            {checks.filter((c) => c.status !== "pass").slice(0, 4).map((c, i) => <div className="alert-line" key={c.id + i}><div className={"alert-dot " + c.status}/><div><b>{c.title}</b><small>{c.evidence}</small></div><Pill status={c.status}/></div>)}
-            {!checks.length && <div className="empty"><ScanSearch size={26}/><p>Chưa có kết quả. Hãy thực hiện quét.</p></div>}
-            {!!checks.length && !checks.some((c) => c.status !== "pass") && <div className="empty">Chưa phát hiện cảnh báo trong các kiểm tra hiện có.</div>}
-          </section></div>
-          <div className="section-shortcuts"><button onClick={() => changePage("fixes")}><div className="shortcut-icon"><Wrench/></div><span><b>Fix Center</b><small>Các công cụ sửa lỗi được kiểm soát</small></span><ArrowRight size={19}/></button>
-          <button onClick={() => changePage("reports")}><div className="shortcut-icon"><FileText/></div><span><b>Xuất báo cáo</b><small>JSON có ẩn thông tin nhận dạng</small></span><ArrowRight size={19}/></button></div>
+          <div className="guide-row"><div><span className="step-number">02</span><strong>Sau khi chạy PowerShell</strong><p>Script lưu FIXIT-Report-*.json trên Desktop (hoặc Documents). Quay lại website để chọn file này.</p></div>{importButton()}</div>
         </>}
-
-        {page === "diagnostics" && <>
-          <div className="heading"><div><div className="eyebrow">DIAGNOSTIC CENTER</div><h1>Chẩn đoán chuyên sâu</h1><p>Kiểm tra trạng thái Windows, mạng và ổ đĩa. Không kết luận “khỏe mạnh” khi thiếu dữ liệu.</p></div>{scanButton}</div>
-          <div className="metrics compact">{(["pass","warn","fail","unknown"] as const).map((status) => <div className="metric" key={status}><b>{counts[status]}</b><span>{labels[status]}</span></div>)}</div>
-          <div className="panel"><div className="panel-title"><div><h3>Kết quả kiểm tra</h3><p>{checks.length} checks · {scan ? time(scan.timestamp) : "Chưa quét"}</p></div><ScanSearch size={20}/></div>
-            <div className="filters"><div className="search-field"><Search size={17}/><input aria-label="Tìm kiểm tra" placeholder="Tìm theo tên hoặc bằng chứng..." value={query} onChange={(e) => setQuery(e.target.value)}/></div>
-              <select aria-label="Phân loại" value={category} onChange={(e) => setCategory(e.target.value)}><option value="all">Tất cả module</option><option value="system">Hệ thống</option><option value="network">Mạng</option><option value="windows">Windows</option></select>
-              <select aria-label="Trạng thái" value={filter} onChange={(e) => setFilter(e.target.value as CheckStatus | "all")}><option value="all">Mọi trạng thái</option>{(["pass","warn","fail","unknown"] as const).map((s) => <option key={s} value={s}>{labels[s]}</option>)}</select></div>
-            <div className="check-list">{matches.map((item, i) => <CheckRow key={item.id + i} item={item}/>)}
-              {!matches.length && <div className="empty"><Search size={28}/><p>Không có dữ liệu phù hợp. {scan ? "Thử bộ lọc khác." : "Hãy quét thiết bị trước."}</p></div>}</div>
+        {page==="analysis"&&<>
+          <div className="page-heading with-action"><div><div className="eyebrow">STEP 03 / INVESTIGATE</div><h1>Phân tích kết quả</h1>
+            <p>File JSON chỉ được xử lý trong bộ nhớ trình duyệt. Không có API nhận file hay tự động gửi dữ liệu.</p></div>{importButton()}</div>
+          {!result?<section className="empty-import"><div className="empty-import-icon"><UploadCloud size={36}/></div><h2>Chưa có báo cáo chẩn đoán</h2>
+            <p>Chạy script trong PowerShell rồi chọn file JSON được lưu tại Desktop hoặc Documents.</p>
+            <div className="empty-actions">{importButton()}<button className="btn secondary" onClick={sample}><Gauge size={17}/> Xem dữ liệu mẫu</button></div>
+            <div className="empty-info"><LockKeyhole size={16}/> Giới hạn 512 KB · JSON v1 · Đọc và phân tích hoàn toàn phía trình duyệt</div></section>
+          : <>
+            {source==="sample"&&<div className="sample-banner"><ShieldAlert size={19}/> Đây là báo cáo <b>MÔ PHỎNG</b>, không phải thông số máy tính của bạn. {importButton("secondary small")}</div>}
+            <div className="report-top"><div><div className="eyebrow">SCAN REVIEW / {source==="sample"?"SAMPLE":"LOCAL IMPORT"}</div>
+              <h2>Kết quả phân tích</h2><p>Được tạo: {new Date(result.report.generatedAt).toLocaleString("vi-VN")} · {result.report.modules.length} module</p></div>
+              <button className="btn secondary" onClick={()=>saveText("FIXIT-Analysis.json",exportAnalysis(result),"application/json;charset=utf-8")}><Download size={16}/> Xuất báo cáo</button></div>
+            <div className="result-metrics">{[
+              {title:"Bình thường",value:result.counts.ok,key:"ok",icon:CheckCircle2},
+              {title:"Cảnh báo",value:result.counts.warning,key:"warning",icon:AlertCircle},
+              {title:"Cần chú ý",value:result.counts.critical,key:"critical",icon:ShieldAlert},
+              {title:"Chưa xác định",value:result.counts.unknown,key:"unknown",icon:CircleHelp},
+            ].map((m)=><div key={m.key} className={"result-metric "+m.key}><m.icon size={20}/><strong>{m.value}</strong><span>{m.title}</span></div>)}</div>
+            <div className="panel"><div className="panel-title"><div><h2>Danh sách phát hiện</h2><p>{result.findings.length} điều kiện đã được đánh giá; không phải chứng nhận toàn bộ máy tính khỏe mạnh.</p></div>
+              <span className="count-chip">{result.score===null?"UNKNOWN":result.score+"% PASS*"}</span></div>
+              <div className="filters"><div className="search"><Search size={16}/><input aria-label="Tìm kiểm tra" value={search} onChange={(e)=>setSearch(e.target.value)} placeholder="Tìm lỗi, dịch vụ, bằng chứng..."/></div>
+                <select aria-label="Lọc trạng thái" value={severity} onChange={(e)=>setSeverity(e.target.value as Severity|"all")}>
+                  <option value="all">Tất cả trạng thái</option>{(Object.keys(LABELS) as Severity[]).map((x)=><option key={x} value={x}>{LABELS[x]}</option>)}</select></div>
+              <div className="findings">{findings.length?findings.map((f)=><FindingItem key={f.id} finding={f}/>):<div className="empty-list">Không có phát hiện phù hợp bộ lọc.</div>}</div>
+              <p className="footnote">* Tỷ lệ vượt kiểm tra trên những phép đo đã biết; không biểu thị độ an toàn hoặc sức khỏe tổng thể của máy.</p>
+            </div>
+            <div className="bottom-cta"><div><h3>Muốn kiểm tra lại sau khi sửa?</h3><p>Chạy lại script để lấy một JSON mới, sau đó so sánh trạng thái thủ công.</p></div><button className="btn primary" onClick={()=>navigate("repairs")}>Mở thư viện sửa lỗi <ArrowRight size={16}/></button></div>
+          </>}
+        </>}
+        {page==="repairs"&&<>
+          <div className="page-heading"><div className="eyebrow">MANUAL REPAIR LIBRARY</div><h1>Thư viện sửa lỗi</h1>
+            <p>Website chỉ cung cấp lệnh đã định nghĩa trước. Mỗi lệnh phải được bạn xem xét và đồng ý mới có thể sao chép.</p></div>
+          <div className="caution"><ShieldAlert size={23}/><div><strong>Không có nút tự sửa Windows từ website</strong><p>Chỉ chạy trên thiết bị được phép quản trị. Nếu đang hỗ trợ từ xa, tránh thao tác gây mất kết nối. Không vượt quyền Administrator hoặc chính sách nội bộ.</p></div></div>
+          <div className="repair-grid">{REPAIR_RECIPES.map((r)=><article className="repair-card" key={r.id}><div className="repair-head"><span className={"repair-symbol "+(r.kind==="Sửa lỗi"?"write":"")}><Wrench size={21}/></span><span className="risk">{r.risk}</span></div>
+              <h3>{r.title}</h3><p>{r.description}</p><div className="repair-foot"><span>{r.kind}</span><button className="btn secondary small" onClick={()=>openRepair(r.id)}>Xem lệnh <ArrowRight size={16}/></button></div>
+            </article>)}</div>
+          <div className="info-note broad"><BookOpenCheck size={20}/><span>Chức năng cao rủi ro như SFC, RestoreHealth, reset network, sửa registry và khởi động lại dịch vụ không được thực thi tự động trong phiên bản web này.</span></div>
+        </>}
+        {page==="guide"&&<>
+          <div className="page-heading"><div className="eyebrow">DOCUMENTATION / SECURITY</div><h1>Hướng dẫn sử dụng</h1><p>Không tải ứng dụng. Không cần đăng nhập. Giữ quyền kiểm soát và dữ liệu trên thiết bị của bạn.</p></div>
+          <div className="guide-panel">
+            {[
+              {step:"01",title:"Chọn module & sao chép lệnh",desc:"Mở Tạo lệnh chẩn đoán, bật các module phù hợp, đọc toàn bộ nội dung PowerShell và chọn Sao chép toàn bộ."},
+              {step:"02",title:"Mở Windows PowerShell",desc:"Trên máy cần kiểm tra, mở Windows PowerShell bằng quyền người dùng hiện tại. Dán nội dung đã kiểm tra và xác nhận trong terminal."},
+              {step:"03",title:"Lấy file báo cáo trên Desktop",desc:"Khi hoàn thành, PowerShell hiển thị đường dẫn FIXIT-Report-*.json. Nếu Desktop không tồn tại, script lưu tại Documents."},
+              {step:"04",title:"Nhập file vào trang web",desc:"Mở Phân tích kết quả, chọn file JSON. File được đọc bằng JavaScript trong trình duyệt, không gửi tới Vercel."},
+              {step:"05",title:"Xem cảnh báo & thao tác thủ công",desc:"Đọc bằng chứng và gợi ý. Với các lệnh sửa trong Fix Center, xem trước, xác nhận và tự chạy trên Windows. Sau đó quét lại."},
+            ].map((s)=><div className="guide-step" key={s.step}><span>{s.step}</span><div><h3>{s.title}</h3><p>{s.desc}</p></div></div>)}
           </div>
+          <div className="security-grid"><div className="security-card"><ShieldCheck size={26}/><h3>Không upload dữ liệu</h3><p>Không có backend nhận file. Báo cáo chỉ tồn tại trong phiên hiện tại, không lưu localStorage theo mặc định.</p></div>
+            <div className="security-card"><LockKeyhole size={26}/><h3>Không vượt quyền Windows</h3><p>Ứng dụng không thay đổi Execution Policy, không dùng lệnh chạy mã từ Internet và không tự yêu cầu Administrator.</p></div>
+            <div className="security-card"><FileText size={26}/><h3>Báo cáo giới hạn dữ liệu</h3><p>Không thu hostname, IP cụ thể, tên tài khoản, mật khẩu, nội dung Event Log hoặc tên lệnh in. Vẫn nên xem JSON trước khi chia sẻ.</p></div></div>
+          <div className="bottom-cta"><div><h3>Sẵn sàng chẩn đoán?</h3><p>Chọn chỉ các phần cần kiểm tra trên máy tính.</p></div><button className="btn primary" onClick={()=>navigate("script")}>Tạo lệnh PowerShell <ArrowRight size={17}/></button></div>
         </>}
-
-        {page === "fixes" && <>
-          <div className="heading"><div><div className="eyebrow">SAFETY FIRST</div><h1>Fix Center</h1><p>Chỉ chạy recipe trong danh sách cho phép sau khi xác nhận. Không cho nhập lệnh tùy ý.</p></div><div className="protect-chip"><LockKeyhole size={17}/> Approval required</div></div>
-          <div className="safety-note"><ShieldCheck size={24}/><div><strong>Mọi thao tác được kiểm soát</strong><p>Hai công cụ đầu được tích hợp trong ứng dụng Windows. Các tính năng còn lại chưa được triển khai. Mã thoát 0 không đồng nghĩa sự cố đã được khắc phục.</p></div></div>
-          <div className="recipe-grid">{recipes.map((r) => <div key={r.id} className="recipe-card"><div className="recipe-top"><div className="recipe-icon"><r.icon size={22}/></div><span className={"risk " + r.risk}>{r.risk === "low" ? "RỦI RO THẤP" : r.risk === "medium" ? "RỦI RO VỪA" : "RỦI RO CAO"}</span></div><h3>{r.title}</h3><p>{r.description}</p><div className="recipe-foot"><span>{r.tag}</span><button className="button small" disabled={!r.enabled || busy} onClick={() => void openPreview(r.id)}>Xem trước <ArrowRight size={15}/></button></div></div>)}</div>
-        </>}
-
-        {page === "history" && <>
-          <div className="heading"><div><div className="eyebrow">LOCAL AUDIT TRAIL</div><h1>Lịch sử hoạt động</h1><p>Lưu lượt quét và thao tác sửa trên SQLite cục bộ. Website chỉ có lịch sử phiên demo.</p></div><button className="button" onClick={() => void refreshHistory()}><RotateCw size={16}/> Tải lại</button></div>
-          <div className="panel"><div className="panel-title"><div><h3>Nhật ký gần đây</h3><p>Tối đa 100 mục gần nhất</p></div><History size={20}/></div>
-            {history.map((h) => <div className="timeline-row" key={h.id}><div className="timeline-icon">{h.kind === "scan" ? <ScanSearch size={17}/> : <Wrench size={17}/>}</div><div><strong>{h.kind === "scan" ? "Quét hệ thống" : "Thao tác Fix Center"}</strong><p>{h.summary}</p><small>{time(h.timestamp)} · {h.status}</small></div></div>)}
-            {!history.length && <div className="empty"><History size={28}/><p>Chưa có hoạt động nào được lưu.</p></div>}
-          </div>
-        </>}
-
-        {page === "reports" && <>
-          <div className="heading"><div><div className="eyebrow">SERVICE REPORT</div><h1>Báo cáo kỹ thuật</h1><p>Xuất JSON mặc định che hostname và không gửi thông tin lên máy chủ.</p></div>
-            <button className="button primary" disabled={!scan} onClick={() => scan && downloadReport(scan, isDesktop ? "desktop" : "demo")}><Download size={17}/> Tải báo cáo JSON</button></div>
-          <div className="panel report-panel"><div className="report-top"><div className="report-icon"><FileText size={28}/></div><div><span className="eyebrow">FIXIT / SERVICE REPORT</span><h2>Biên bản chẩn đoán</h2><p>Chỉ bao gồm kết quả thu thập trong phiên hiện tại.</p></div></div>
-            <div className="report-stats"><div><span>Mã phiên</span><strong>{scan?.id.slice(0, 22) ?? "—"}</strong></div><div><span>Số kiểm tra</span><strong>{checks.length}</strong></div><div><span>Cảnh báo</span><strong>{counts.warn + counts.fail}</strong></div><div><span>Chế độ</span><strong>{isDesktop ? "Windows local" : "Dữ liệu demo"}</strong></div></div>
-            <h3>Nội dung xuất (JSON)</h3><pre className="json-preview">{scan ? JSON.stringify(createRedactedReport(scan, isDesktop ? "desktop" : "demo"), null, 2) : "Chưa có lượt quét nào để tạo báo cáo."}</pre>
-            <p className="legal-line"><LockKeyhole size={16}/> Chế độ ẩn danh: hostname bị thay bằng [REDACTED]. Chỉ xuất dữ liệu sau khi người dùng nhấn nút.</p>
-          </div>
-        </>}
-
-        {page === "settings" && <>
-          <div className="heading"><div><div className="eyebrow">PREFERENCES</div><h1>Cài đặt và bảo mật</h1><p>MVP ưu tiên cấu hình tối thiểu, bảo mật rõ ràng và quyền ít nhất có thể.</p></div></div>
-          <div className="panel settings-panel"><div className="panel-title"><div><h3>Chế độ vận hành</h3><p>Cấu hình an toàn hiện được cố định trong phiên bản MVP</p></div><Settings2 size={20}/></div>
-            <div className="setting-row"><div className="setting-icon"><LockKeyhole size={21}/></div><div><strong>Read-only mặc định</strong><p>Chỉ có thể sửa sau khi xem tác động và xác nhận riêng</p></div><span className="setting-state">LUÔN BẬT</span></div>
-            <div className="setting-row"><div className="setting-icon"><Database size={21}/></div><div><strong>Dữ liệu offline</strong><p>SQLite lưu trên máy; không kết nối cơ sở dữ liệu cloud</p></div><span className="setting-state">ĐÃ BẬT</span></div>
-            <div className="setting-row"><div className="setting-icon"><ShieldCheck size={21}/></div><div><strong>Báo cáo ẩn danh</strong><p>Hostname được che mặc định khi xuất báo cáo</p></div><span className="setting-state">ĐÃ BẬT</span></div>
-            <div className="setting-row"><div className="setting-icon"><Network size={21}/></div><div><strong>Kiểm tra Internet chủ động</strong><p>Chưa tự động kiểm tra kết nối ra ngoài hoặc tải dữ liệu lên cloud</p></div><span className="setting-state neutral">CHƯA CÓ</span></div>
-          </div>
-          <div className="about-card"><Cpu size={23}/><div><strong>FIXIT Commander v0.1.0</strong><p>Windows-first · Tauri 2 + React + Rust · Phát triển theo các giai đoạn, không tuyên bố hỗ trợ toàn bộ lỗi Windows.</p></div></div>
-        </>}
-        <footer className="footer"><span>© FIXIT Commander · Built for responsible IT support</span><span><Clock3 size={14}/> {scan ? "Scan " + time(scan.timestamp) : "Chưa quét thiết bị"}</span></footer>
-      </div>
-    </main>
-    {preview && <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) setPreview(null); }}>
-      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="preview-title"><div className="modal-heading"><div className="preview-icon"><ShieldAlert size={23}/></div><button aria-label="Đóng" disabled={busy} onClick={() => setPreview(null)}><X size={20}/></button></div>
-        <div className="eyebrow">APPROVAL REQUIRED</div><h2 id="preview-title">{preview.title}</h2><p>Recipe ID: {preview.id} · Rủi ro: {preview.risk === "low" ? "thấp" : "trung bình"}</p>
-        <div className="modal-warning"><strong>Tác động dự kiến</strong><p>{preview.impact}</p>{preview.elevated && <small>Có thể cần mở ứng dụng bằng Administrator. Không tự nâng quyền hoặc vượt UAC.</small>}</div>
-        <label className="approval-label"><input type="checkbox" id="approval" key={preview.token} onChange={(e) => { const btn = document.getElementById("approve-submit") as HTMLButtonElement | null; if(btn) btn.disabled = !e.target.checked; }}/><span>Tôi hiểu tác động, đang sử dụng thiết bị mình được quyền quản trị và đồng ý thực hiện.</span></label>
-        <div className="modal-actions"><button className="button" disabled={busy} onClick={() => setPreview(null)}>Hủy</button><button id="approve-submit" className="button primary" disabled onClick={() => void applyFix()}>{busy ? "Đang thực hiện..." : isDesktop ? "Đồng ý thực hiện" : "Mô phỏng (không sửa máy)"}</button></div>
-      </div>
+        <footer className="footer"><span>FIXIT Commander · Web Edition v1.0.0</span><span><ShieldCheck size={14}/> Local-only JSON analysis · No account required</span></footer>
+      </main>
+    </div>
+    {currentRecipe&&<div className="modal-backdrop" onMouseDown={(e)=>{if(e.currentTarget===e.target)closeRepair();}}>
+      <section className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><div className="modal-head"><div className="modal-icon"><Terminal size={25}/></div><button className="icon-btn" aria-label="Đóng" onClick={closeRepair}><X size={20}/></button></div>
+        <div className="eyebrow">REVIEW BEFORE EXECUTION</div><h2 id="modal-title">{currentRecipe.title}</h2><p>{currentRecipe.description}</p>
+        <div className="command-box"><div className="command-title"><span>WINDOWS POWERSHELL</span><span>Rủi ro: {currentRecipe.risk}</span></div><pre><code>{currentRecipe.command}</code></pre></div>
+        <div className="caution mini"><ShieldAlert size={20}/><p>{currentRecipe.note}</p></div>
+        <label className="consent"><input type="checkbox" checked={approved} onChange={(e)=>setApproved(e.target.checked)}/>
+          <span>Tôi đã xem lệnh, hiểu tác động và được phép thao tác trên thiết bị này. Tôi tự chịu trách nhiệm chạy thủ công.</span></label>
+        <div className="modal-actions"><button className="btn secondary" onClick={closeRepair}>Hủy</button><button className="btn primary" disabled={!approved} onClick={()=>void copy(currentRecipe.command,"repair")}>{copied==="repair"?<CheckCheck size={17}/>:<Clipboard size={17}/>} {copied==="repair"?"Đã sao chép":"Sao chép lệnh"}</button></div>
+        <small className="modal-foot">Website KHÔNG thực hiện lệnh. Bạn chủ động dán và chạy lệnh trong PowerShell trên Windows.</small>
+      </section>
     </div>}
   </div>;
 }

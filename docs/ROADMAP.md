@@ -1,25 +1,19 @@
-# FIXIT Commander roadmap
+# FIXIT Commander Web Roadmap
 
-## Delivered: MVP foundation (v0.1.0)
-Tauri + React UI, Windows CIM inventory, deterministic check statuses, local SQLite history, two guarded fixed recipes, report JSON, web demo and CI source/build workflow.
-
-## Next milestone: tested MVP v0.2
-- Windows CI build success, manual Windows 11 VM smoke tests and reliable installer artifact.
-- Normalize all PS output; remove fragile WMI provider assumptions and add per-detector error isolation.
-- Proper bounded subprocess output, cancellation and secure audit retention.
-- Add opt-in external DNS/TCP checks (configured endpoints), stronger repair rechecks.
-- Add Event Log time-window counters (do not export user-sensitive event messages by default).
-- Redaction policy and report HTML generation.
+## Current v1.0 — No-install web
+- Four selectable Windows PowerShell read-only collectors.
+- Local JSON, strict in-browser import, deterministic findings, report export.
+- Consent-gated manual fix commands and responsive interface.
+- GitHub Actions web tests and Vercel production.
 
 ## v1.1
-- WinGet allowlisted installer workflows and safe Print Spooler diagnostics.
-- DHCP renew behind live network/remote-session safety tests.
-- Admin helper with signed, narrowly scoped actions.
-- RestoreHealth/SFC as manual, high-risk, elevated operations with post-check evidence.
-- Installer signatures and staged update channels.
+- Stronger collector fallback handling for unavailable Windows providers and verbose per-check unknown status.
+- Before-and-after JSON comparison within browser, more granular privacy redaction.
+- Optional network probes with clearly disclosed destinations and explicit opt-in.
+- Browser-printable technician report and accessibility QA.
+- PowerShell automated tests on Windows VMs.
 
-## v2+
-- Opt-in AI triage: AI only suggests; cannot directly invoke native commands.
-- Optional organization-managed remote agent, explicit user consent, device authentication, audit and encrypted transport.
-- Backend + cloud database **only when** multi-device sync is needed; choose either Neon or Supabase, not both by default.
-- Render or Cloudflare Workers may host API, Vercel remains public website.
+## v2 (optional)
+- Ticket and asset registry with user authentication, only if a team asks for synchronized work.
+- Choose one cloud database (Neon or Supabase), not both by default; Render or Cloudflare only if API endpoints are justified.
+- Optional signed Windows agent only for customers who accept installation. Never silently introduce it into the no-install edition.

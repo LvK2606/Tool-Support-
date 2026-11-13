@@ -1,33 +1,19 @@
-# Security boundaries and limitations
+# Security model: Web + Manual PowerShell
 
-## Security model
+1. Only explicitly allowlisted module identifiers are accepted. Generated PowerShell is fixed and inspectable, not AI-created and never runs automatically in the browser.
+2. Windows scripts only read OS, RAM, CPU, disk space, adapter configuration flags, service state and event error count (max 20). They do not read passwords, account names, hostnames, full IP addresses, printer names, jobs or event message bodies. Their single write is a JSON report to the user's Desktop or Documents.
+3. Script makes **no external network requests**, runs no remote code, does not change registry, services, execution policy or UAC. Enterprise execution policy must not be bypassed.
+4. The browser reads JSON via File API; imported data is validated (max 512 KB, schemaVersion 1), normalized to a small allowlist, and stays in memory. No POST upload, cloud backend, log analytics or persistent browser storage.
+5. Vercel headers restrict script execution and set connect-src 'none'. Browser extensions and compromised source/deployment are outside the app's direct control.
+6. Manual repair recipes require explicit review and consent before the Copy button is enabled; browser never runs them.
+7. Diagnoses are limited to selected checks, and sampled log counts do not prove root cause. Unknown observations stay unknown. The PASS percentage is not an overall PC health score.
+8. Network adapter descriptions, CPU names and service states may still be sensitive enterprise information. Users should review any JSON before sharing with others.
 
-- Native commands are implemented in Rust and cannot accept arbitrary command strings or arbitrary user-supplied arguments.
-- Tauri webview only receives \`core:default\`; there is no shell or filesystem plugin.
-- \`NET_FLUSH_DNS\` and \`WIN_DISM_CHECK\` require explicit preview + consent + a single-use 120-second token. Token is consumed before execution.
-- Fix subprocesses use fixed executable paths/names and fixed argument vectors, never \`cmd /c\` or shell string concatenation.
-- Windows may require an elevated session; the tool does **not** bypass UAC or company policy.
-- External Internet connectivity tests are not run by default.
-- History is written only to local SQLite. The app does not authenticate or collect passwords/BitLocker keys.
-- Browser mode is always simulation, even if someone downloads the static page and opens it on Windows.
+## QA before organization-wide use
 
-## Known limitations to resolve before business deployment
-
-1. **Repair verification:** a successful command exit is recorded as \`unverified\`; separate recovery detectors are required. DISM CheckHealth currently does not parse diagnostic results.
-2. **Process boundedness:** child processes have a timeout but output streams should be consumed concurrently and capped in the production version; this MVP runs fixed commands emitting small output.
-3. **Data minimization:** device scan history contains raw hostname and local network metadata. Shared-device usage requires retention policy and local access restrictions. Default reports redact hostname but evidence redaction should receive more robust testing.
-4. **Threat model:** native window and IPC exposure require review under Tauri 2 capabilities and CSP. No remote webview URLs are loaded.
-5. **Release supply chain:** add lockfiles, dependency vulnerability checks, signed installers and artifact attestations before production.
-6. **Windows validation:** test admin/nonadmin, no network, VPN, domain-joined devices, services disabled by policy, language settings and PowerShell failures.
-7. **Privacy:** no sensitive Event Log payloads are collected in MVP, and no user secrets should ever be logged.
-
-The public web demo's font/assets must be self-contained for fully offline use; avoid external resource loads.
-
-## QA acceptance gates
-
-- Windows x64 app starts, scans real system data (no synthetic fallback).
-- Without privileges, errors are surfaced; no simulated success.
-- \`unknown\` is shown when readings fail.
-- No recipe executes without separate consent.
-- Repair history contains real execution outcome; no automatic success claims.
-- Website clearly states DEMO and executes no Windows functions.
+- Validate all module combinations with Windows PowerShell 5.1 on a VM and several Windows editions/locales.
+- Test without Administrator, when CIM/WinRM/Event Log providers are unavailable.
+- Validate null network lists, no printer, no system error event, Desktop redirect to OneDrive, and Windows Server restrictions.
+- Try invalid/oversized/malicious JSON. Verify no XSS, no upload and no raw fields escaping the validated schema.
+- Test keyboard-only operation, mobile layout, secure headers and copying commands.
+- Treat the generated .ps1 as unsigned. Do not instruct users to change Group Policy or set ExecutionPolicy Bypass.
