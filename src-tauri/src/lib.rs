@@ -119,8 +119,8 @@ $interfaces = @(Get-CimInstance Win32_NetworkAdapterConfiguration -Filter 'IPEna
     name = $_.Description
     dhcp = [bool]$_.DHCPEnabled
     hasIPv4 = [bool](@($_.IPAddress | Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' }).Count)
-    hasGateway = [bool](@($_.DefaultIPGateway).Count)
-    hasDns = [bool](@($_.DNSServerSearchOrder).Count)
+    hasGateway = [bool](@($_.DefaultIPGateway | Where-Object { $_ -ne $null -and $_ -ne '' }).Count)
+    hasDns = [bool](@($_.DNSServerSearchOrder | Where-Object { $_ -ne $null -and $_ -ne '' }).Count)
   }
 })
 $services = @(Get-Service -Name 'Dnscache','Dhcp','EventLog' | ForEach-Object {
